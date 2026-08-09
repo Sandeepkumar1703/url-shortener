@@ -1,124 +1,405 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-	<modelVersion>4.0.0</modelVersion>
-	<parent>
-		<groupId>org.springframework.boot</groupId>
-		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.0</version>
-		<relativePath/> <!-- lookup parent from repository -->
-	</parent>
-	<groupId>com.sandeep</groupId>
-	<artifactId>url-shortener</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
-	<licenses>
-		<license/>
-	</licenses>
-	<developers>
-		<developer/>
-	</developers>
-	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
-	</scm>
-	<properties>
-		<java.version>21</java.version>
-	</properties>
-	<dependencies>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-jpa</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-validation</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-webmvc</artifactId>
-		</dependency>
 
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-devtools</artifactId>
-			<scope>runtime</scope>
-			<optional>true</optional>
-		</dependency>
-		<dependency>
-			<groupId>org.postgresql</groupId>
-			<artifactId>postgresql</artifactId>
-			<scope>runtime</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.projectlombok</groupId>
-			<artifactId>lombok</artifactId>
-			<optional>true</optional>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-data-jpa-test</artifactId>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-validation-test</artifactId>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-webmvc-test</artifactId>
-			<scope>test</scope>
-		</dependency>
-	</dependencies>
+<!--
+    Maven Project Object Model (POM)
 
-	<build>
-		<plugins>
-			<plugin>
-				<groupId>org.springframework.boot</groupId>
-				<artifactId>spring-boot-maven-plugin</artifactId>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<executions>
-					<execution>
-						<id>default-compile</id>
-						<phase>compile</phase>
-						<goals>
-							<goal>compile</goal>
-						</goals>
-						<configuration>
-							<annotationProcessorPaths>
-								<path>
-									<groupId>org.projectlombok</groupId>
-									<artifactId>lombok</artifactId>
-								</path>
-							</annotationProcessorPaths>
-						</configuration>
-					</execution>
-					<execution>
-						<id>default-testCompile</id>
-						<phase>test-compile</phase>
-						<goals>
-							<goal>testCompile</goal>
-						</goals>
-						<configuration>
-							<annotationProcessorPaths>
-								<path>
-									<groupId>org.projectlombok</groupId>
-									<artifactId>lombok</artifactId>
-								</path>
-							</annotationProcessorPaths>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-		</plugins>
-	</build>
+    Defines:
+    - Project metadata
+    - Java version
+    - Application dependencies
+    - Test dependencies
+    - Build plugins
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="
+             http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <!-- Maven model version -->
+    <modelVersion>4.0.0</modelVersion>
+
+
+    <!-- ============================================================
+         Spring Boot Parent
+         ============================================================ -->
+
+    <!--
+        Spring Boot parent provides:
+        - Dependency version management
+        - Maven plugin configuration
+        - Common Maven defaults
+        - Compatible dependency versions
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.2</version>
+        <relativePath/>
+    </parent>
+
+
+    <!-- ============================================================
+         Project Information
+         ============================================================ -->
+
+    <groupId>com.sandeep</groupId>
+
+    <artifactId>url-shortener</artifactId>
+
+    <version>0.0.1-SNAPSHOT</version>
+
+    <name>url-shortener</name>
+
+    <description>
+        URL Shortener REST API built using Spring Boot,
+        PostgreSQL, JPA and Flyway
+    </description>
+
+
+    <!-- ============================================================
+         Project Properties
+         ============================================================ -->
+
+    <properties>
+
+        <!--
+            Java version used by the application.
+            The project is compiled using Java 17.
+        -->
+        <java.version>17</java.version>
+
+    </properties>
+
+
+    <!-- ============================================================
+         Dependency Management
+         ============================================================ -->
+
+    <dependencyManagement>
+        <dependencies>
+
+            <!--
+                Testcontainers BOM
+
+                Keeps all Testcontainers modules on the same version.
+
+                This is important because Testcontainers consists of
+                multiple modules such as:
+                - junit-jupiter
+                - postgresql
+                - core
+                - Docker Java client
+
+                Using the BOM prevents incompatible Testcontainers
+                module versions from being resolved.
+
+                Version 2.0.5 is used for the Testcontainers stack.
+            -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>2.0.5</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+
+    <!-- ============================================================
+         Application Dependencies
+         ============================================================ -->
+
+    <dependencies>
+
+
+        <!-- ========================================================
+             Spring Web
+             ======================================================== -->
+
+        <!--
+            Provides:
+            - REST controllers
+            - HTTP request/response handling
+            - Embedded Tomcat
+            - JSON serialization/deserialization
+            - Spring MVC
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+
+        <!-- ========================================================
+             Spring Data JPA
+             ======================================================== -->
+
+        <!--
+            Provides:
+            - JPA/Hibernate integration
+            - Repository abstraction
+            - Entity management
+            - Database persistence
+            - Transaction management
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+
+        <!-- ========================================================
+             Spring Boot Validation
+             ======================================================== -->
+
+        <!--
+            Provides Jakarta Bean Validation support.
+
+            Used for:
+            - @Valid
+            - @NotBlank
+            - @Future
+            - @Size
+            - Other validation annotations
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+
+        <!-- ========================================================
+             PostgreSQL
+             ======================================================== -->
+
+        <!--
+            PostgreSQL JDBC driver.
+
+            Provides connectivity between Spring Boot/JPA
+            and the PostgreSQL database.
+
+            Runtime scope is sufficient because the application
+            does not directly compile against the JDBC driver API.
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+
+        <!-- ========================================================
+             Flyway Database Migration
+             ======================================================== -->
+
+        <!--
+            Flyway Core
+
+            Provides version-controlled database migrations.
+
+            Migration files are stored under:
+
+            src/main/resources/db/migration
+
+            Example:
+            V1__create_urls_table.sql
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <version>11.10.0</version>
+        </dependency>
+
+
+        <!--
+            Flyway PostgreSQL support.
+
+            Required for PostgreSQL-specific database
+            functionality with Flyway 11.x.
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <version>11.10.0</version>
+        </dependency>
+
+
+        <!-- ========================================================
+             Lombok
+             ======================================================== -->
+
+        <!--
+            Lombok reduces Java boilerplate.
+
+            Used in this project for annotations such as:
+            - @Getter
+            - @Setter
+            - @Builder
+            - @Data
+            - @RequiredArgsConstructor
+            - @Slf4j
+        -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+
+        <!-- ========================================================
+             Spring Boot DevTools
+             ======================================================== -->
+
+        <!--
+            Provides development-time features such as:
+            - Automatic application restart
+            - Development conveniences
+
+            Runtime + optional because DevTools is not required
+            in production.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+
+        <!-- ========================================================
+             Testing
+             ======================================================== -->
+
+        <!--
+            Spring Boot Test Starter
+
+            Provides the main testing stack:
+            - JUnit 5
+            - Mockito
+            - Spring Test
+            - MockMvc
+            - AssertJ
+
+            Used for:
+            - Unit tests
+            - Controller tests
+            - Integration tests
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+
+        <!--
+            Hibernate Validator
+
+            Provides the Bean Validation implementation.
+
+            Used with validation annotations such as:
+            - @NotBlank
+            - @Future
+            - @URL
+        -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+        </dependency>
+
+
+        <!-- ========================================================
+             OpenAPI / Swagger
+             ======================================================== -->
+
+        <!--
+            SpringDoc OpenAPI
+
+            Provides:
+            - OpenAPI specification
+            - Swagger UI
+            - Interactive API documentation
+
+            Swagger UI:
+            /swagger-ui.html
+
+            OpenAPI JSON:
+            /v3/api-docs
+        -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.6.0</version>
+        </dependency>
+
+
+        <!-- ========================================================
+             Testcontainers
+             ======================================================== -->
+
+        <!--
+            Testcontainers JUnit 5 Integration
+
+            Provides:
+            - JUnit 5 integration
+            - @Testcontainers
+            - @Container
+            - Automatic container lifecycle management
+
+            Version is managed by the Testcontainers BOM.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+
+        <!--
+            Testcontainers PostgreSQL Module
+
+            Provides:
+            - PostgreSQLContainer
+            - PostgreSQL Docker container support
+            - Real PostgreSQL database for repository tests
+
+            Version is managed by the Testcontainers BOM.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+
+    <!-- ============================================================
+         Build Configuration
+         ============================================================ -->
+
+    <build>
+
+        <plugins>
+
+            <!--
+                Spring Boot Maven Plugin
+
+                Provides:
+                - Spring Boot application packaging
+                - Executable JAR creation
+                - Spring Boot Maven goals
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+        </plugins>
+
+    </build>
 
 </project>
