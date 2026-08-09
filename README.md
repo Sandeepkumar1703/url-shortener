@@ -11,7 +11,8 @@
 # Features
 
 * Create short URLs for valid URLs
-* Generate unique short codes
+* Generate compact, URL-safe short codes
+* Collision-safe short-code generation
 * Redirect short URLs to original destinations
 * URL expiration support
 * Track click counts
@@ -21,10 +22,12 @@
 * Centralized global exception handling
 * Duplicate short-code protection
 * Redis caching for frequently accessed URLs
+* Cache-aside caching strategy
+* Cache invalidation on URL deletion
 * Redis-backed rate limiting
 * IP-based request throttling
 * Rate-limit response headers
-* Retry-After support for throttled requests
+* `Retry-After` support for throttled requests
 * PostgreSQL persistence
 * Flyway database migrations
 * Swagger/OpenAPI documentation
@@ -36,6 +39,7 @@
 * PostgreSQL integration testing with Testcontainers
 * Layered architecture
 * Read-heavy scalability architecture
+* Horizontal scalability design
 
 ---
 
@@ -62,7 +66,14 @@
 
 # Architecture
 
-The application follows a layered architecture combined with a **cache-aside strategy** and **rate-limiting interceptor**.
+The application follows a layered architecture combined with:
+
+* Cache-aside Redis caching
+* Redis-backed rate limiting
+* PostgreSQL as the source of truth
+* Stateless application instances
+* Read-heavy redirect optimization
+* Horizontal scalability design
 
 ```text
                          ┌───────────────────┐
@@ -76,82 +87,119 @@ The application follows a layered architecture combined with a **cache-aside str
                          └─────────┬─────────┘
                                    │
                          ┌─────────▼─────────┐
-                         │ Rate Limit         │
-                         │ Interceptor        │
+                         │ Rate Limit        │
+                         │ Interceptor       │
                          └─────────┬─────────┘
                                    │
                                    ▼
                          ┌───────────────────┐
                          │   Service Layer   │
-                         └───────┬─────┬─────┘
-                                 │     │
-                    Cache Hit ───┘     └── Cache Miss
-                      │                         │
-                      ▼                         ▼
-              ┌──────────────┐          ┌──────────────┐
-              │    Redis     │          │ PostgreSQL   │
-              │    Cache     │          │  Repository  │
-              └──────────────┘          └──────────────┘
+                         └─────────┬─────────┘
+                                   │
+                         ┌─────────▼─────────┐
+                         │      Redis        │
+                         │ Cache + Rate Limit│
+                         └─────────┬─────────┘
+                                   │
+                              Cache Miss
+                                   │
+                                   ▼
+                         ┌───────────────────┐
+                         │    PostgreSQL     │
+                         │  Source of Truth  │
+                         └───────────────────┘
 ```
-
-The main design principle is:
-
-```text
-Read Request
-     │
-     ▼
-Rate Limit Check
-     │
-     ▼
-Redis Cache
-     │
-     ├── HIT ──────► Return cached URL
-     │
-     └── MISS
-           │
-           ▼
-       PostgreSQL
-           │
-           ▼
-       Populate Redis
-           │
-           ▼
-       Return URL
-```
-
-This prevents PostgreSQL from becoming the bottleneck when the same short URLs are requested repeatedly.
 
 ---
 
-# Scalability Architecture
+# Core Design Requirements
 
-## 1. Read-Heavy Workload
+The URL shortener is designed around the following system-design concepts:
 
-URL shorteners typically have a highly asymmetric workload.
+| Requirement             | Implementation                                                    |
+| ----------------------- | ----------------------------------------------------------------- |
+| Short-code generation   | Compact URL-safe identifiers with database uniqueness enforcement |
+| Database design         | PostgreSQL with indexed/unique short-code lookup                  |
+| Redis caching           | Cache-aside strategy for redirect lookups                         |
+| Read-heavy architecture | Redis-first redirect path                                         |
+| Rate limiting           | Redis-backed, IP-based request limiting                           |
+| Scalability basics      | Stateless application design and horizontal scaling architecture  |
 
-For example:
+---
+
+# Short-Code Generation
+
+The application generates a compact URL-safe identifier for each URL.
+
+Example:
 
 ```text
-URL Creation       → Low volume
-URL Statistics     → Moderate volume
-URL Deletion       → Low volume
-URL Redirection    → Very high volume
+https://example.com/very/long/url
+
+              ↓
+
+http://localhost:8080/Ab12Cd
 ```
 
-A typical workload can look like:
+The short code is designed to be:
+
+* Compact
+* URL-safe
+* Efficient to query
+* Fast to generate
+* Collision-safe
+
+### Important Design Note
+
+The short code is an **identifier**, not a cryptographic hash.
+
+The database remains the final authority for uniqueness through a unique constraint on the short-code field.
+
+Conceptually:
 
 ```text
-          1 URL Creation
-                │
-                ▼
-       ┌─────────────────┐
-       │                 │
-       │   Many Reads    │
-       │                 │
-       └─────────────────┘
+Generate short code
+        │
+        ▼
+Check uniqueness
+        │
+        ├── Available ──► Save URL
+        │
+        └── Collision ──► Generate another code
 ```
 
-Therefore, the architecture prioritizes **fast reads**.
+This prevents duplicate public identifiers.
+
+---
+
+# Database Design
+
+PostgreSQL is the persistent source of truth.
+
+The core database consists of a `urls` table.
+
+```text
+┌─────────────────────────────────────────────┐
+│                    urls                     │
+├─────────────────────────────────────────────┤
+│ id                                          │
+│ short_code                                  │
+│ original_url                                │
+│ created_at                                  │
+│ expires_at                                  │
+│ click_count                                 │
+└─────────────────────────────────────────────┘
+```
+
+Important database responsibilities include:
+
+* Persistent URL storage
+* Unique short-code enforcement
+* URL expiration information
+* Click-count persistence
+* Querying by short code
+
+The `short_code` field is the primary lookup key for redirect operations and should have a unique index/constraint.
 
 ---
 
@@ -159,9 +207,7 @@ Therefore, the architecture prioritizes **fast reads**.
 
 Redis is used as a high-speed cache in front of PostgreSQL.
 
-## Cache-Aside Strategy
-
-The application follows the cache-aside pattern.
+The application follows the **cache-aside pattern**.
 
 ```text
                   GET /Ab12Cd
@@ -181,7 +227,7 @@ The application follows the cache-aside pattern.
                            Redirect
 ```
 
-### Cache Hit
+## Cache Hit
 
 When the short code exists in Redis:
 
@@ -195,9 +241,9 @@ Redis
 Original URL
 ```
 
-PostgreSQL is not required for the lookup.
+PostgreSQL is not required for the URL lookup.
 
-### Cache Miss
+## Cache Miss
 
 When the short code does not exist in Redis:
 
@@ -219,7 +265,119 @@ Redis
    Original URL
 ```
 
-This significantly reduces database read pressure for popular URLs.
+This reduces database read pressure for frequently accessed URLs.
+
+---
+
+# Redis Key Design
+
+The application uses Redis for more than one purpose.
+
+Different key namespaces separate cache data from rate-limit state.
+
+```text
+Redis
+│
+├── URL Cache
+│   └── urlCache::{shortCode}
+│
+└── Rate Limits
+    └── rate_limit:{operation}:{clientIp}
+```
+
+Example:
+
+```text
+urlCache::5MkILI
+
+rate_limit:create:172.18.0.1
+
+rate_limit:redirect:172.18.0.1
+```
+
+This allows a single Redis deployment to support both caching and distributed rate-limit state.
+
+---
+
+# Cache Invalidation
+
+Redis is treated as a cache, not the source of truth.
+
+The expected lifecycle is:
+
+```text
+Create
+  │
+  ▼
+PostgreSQL
+  │
+  ▼
+Redis Cache
+```
+
+For reads:
+
+```text
+Redis
+ │
+ ├── HIT  → Return cached URL
+ │
+ └── MISS → PostgreSQL → Redis → Return URL
+```
+
+For deletion:
+
+```text
+DELETE URL
+     │
+     ▼
+PostgreSQL
+     │
+     ▼
+Invalidate Redis cache
+```
+
+Cache invalidation is important for preventing deleted or outdated URLs from being served from Redis.
+
+---
+
+# Read-Heavy Architecture
+
+URL shorteners typically have an asymmetric workload:
+
+```text
+URL Creation       → Low volume
+URL Statistics     → Moderate volume
+URL Deletion       → Low volume
+URL Redirection    → Very high volume
+```
+
+Therefore, the redirect path is optimized for high read volume.
+
+```text
+Read Request
+     │
+     ▼
+Rate Limit Check
+     │
+     ▼
+Redis Cache
+     │
+     ├── HIT ──────► Return URL
+     │
+     └── MISS
+           │
+           ▼
+       PostgreSQL
+           │
+           ▼
+       Populate Redis
+           │
+           ▼
+       Return URL
+```
+
+The objective is to prevent PostgreSQL from becoming the bottleneck when popular short URLs are repeatedly accessed.
 
 ---
 
@@ -240,24 +398,24 @@ With caching:
 100,000 redirects
         │
         ▼
-Redis
- │
- ├── 95,000 cache hits
- │
- └── 5,000 database lookups
+      Redis
+       │
+       ├── Cache hits
+       │
+       └── Cache misses → PostgreSQL
 ```
 
-The exact cache-hit ratio depends on traffic patterns, cache expiration, and the number of unique URLs.
+The actual cache-hit ratio depends on traffic patterns, cache expiration, and the number of unique URLs.
 
-Redis therefore acts as the first read layer while PostgreSQL remains the source of truth.
+Redis therefore acts as the first read layer while PostgreSQL remains the system of record.
 
 ---
 
 # Rate Limiting
 
-The application implements Redis-backed rate limiting through a Spring MVC interceptor.
+The application implements Redis-backed rate limiting through a Spring MVC `HandlerInterceptor`.
 
-Rate limiting is applied before requests reach the controller.
+Rate limiting occurs before requests reach the controller.
 
 ```text
 Client
@@ -282,7 +440,7 @@ Redis Rate Limit
 | Statistics | 30 requests | 60 seconds |
 | Delete URL | 10 requests | 60 seconds |
 
-The limits are applied per client IP.
+Rate limiting is currently based on the client IP address.
 
 ---
 
@@ -315,9 +473,27 @@ Example response:
 
 ---
 
+# Rate Limiting and Proxies
+
+The interceptor checks:
+
+```text
+X-Forwarded-For
+X-Real-IP
+Remote Address
+```
+
+When deployed behind a reverse proxy or load balancer, forwarded IP headers should only be trusted when they are supplied by a trusted proxy.
+
+Otherwise, clients may be able to spoof forwarded IP information.
+
+A production deployment should therefore configure trusted proxy handling appropriately.
+
+---
+
 # Why Rate Limiting?
 
-Rate limiting protects the system from:
+Rate limiting protects the application from:
 
 * Accidental request floods
 * API abuse
@@ -326,15 +502,17 @@ Rate limiting protects the system from:
 * Redirect abuse
 * Resource exhaustion
 
-Redis is suitable for this because rate-limit state can be shared across multiple application instances.
+Because rate-limit state is stored in Redis, multiple Spring Boot instances can share the same rate-limit state.
 
 ---
 
 # Horizontal Scalability
 
-The application is designed so that the Spring Boot application layer can be scaled horizontally.
+The current Docker Compose environment runs a single Spring Boot application instance.
 
-Instead of:
+However, the application is designed so that the application layer can be scaled horizontally.
+
+Current deployment:
 
 ```text
                  Client
@@ -342,13 +520,14 @@ Instead of:
                     ▼
               ┌──────────┐
               │   App    │
-              └──────────┘
-                    │
-                    ▼
-                Database
+              └────┬─────┘
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+       Redis           PostgreSQL
 ```
 
-The application can scale to:
+Scalable target architecture:
 
 ```text
                        ┌──────────────┐
@@ -364,28 +543,28 @@ The application can scale to:
               │                │                │
               ▼                ▼                ▼
         ┌──────────┐     ┌──────────┐     ┌──────────┐
-        │ App #1   │     │ App #2   │     │ App #3   │
+        │  App #1  │     │  App #2  │     │  App #3  │
         └────┬─────┘     └────┬─────┘     └────┬─────┘
              │                │                │
              └────────────────┼────────────────┘
                               │
-                ┌─────────────┴─────────────┐
-                │                           │
-                ▼                           ▼
-          ┌───────────┐               ┌───────────┐
-          │   Redis   │               │ PostgreSQL│
-          └───────────┘               └───────────┘
+                 ┌────────────┴────────────┐
+                 │                         │
+                 ▼                         ▼
+           ┌───────────┐             ┌───────────┐
+           │   Redis   │             │ PostgreSQL│
+           │Cache+Rate │             │Source of  │
+           │  Limits   │             │   Truth   │
+           └───────────┘             └───────────┘
 ```
 
-Because rate-limit state and cache data are stored externally in Redis, application instances do not need to maintain local state for these concerns.
+Because cache and rate-limit state are externalized into Redis and persistent data is stored in PostgreSQL, application instances do not need to maintain local state for these concerns.
 
 ---
 
 # Database as Source of Truth
 
 PostgreSQL remains the authoritative persistent storage layer.
-
-Redis is treated as a cache rather than the primary database.
 
 ```text
                 Application
@@ -397,67 +576,7 @@ Redis is treated as a cache rather than the primary database.
             Cache        Source of Truth
 ```
 
-If Redis is restarted or its cache is cleared, the application can retrieve the required URL information from PostgreSQL and rebuild the cache.
-
----
-
-# Database Design
-
-The core database consists of a `urls` table.
-
-Conceptually:
-
-```text
-┌─────────────────────────────────────────────┐
-│                    urls                     │
-├─────────────────────────────────────────────┤
-│ id                                          │
-│ short_code                                  │
-│ original_url                                │
-│ created_at                                  │
-│ expires_at                                  │
-│ click_count                                 │
-└─────────────────────────────────────────────┘
-```
-
-Important database responsibilities include:
-
-* Persistent URL storage
-* Unique short-code enforcement
-* URL expiration information
-* Click-count persistence
-* Querying by short code
-
-The `short_code` field should be indexed/unique because it is the primary lookup key for redirects.
-
----
-
-# Short-Code Generation
-
-The service generates a compact short code for each URL.
-
-The short code is used as the public identifier:
-
-```text
-https://example.com/very/long/url
-
-              ↓
-
-http://localhost:8080/Ab12Cd
-```
-
-The short code must satisfy the following properties:
-
-* Compact
-* URL-safe
-* Unique
-* Fast to generate
-* Efficient to query
-* Collision-safe through database uniqueness enforcement
-
-The database remains the final authority for uniqueness.
-
-If a generated code conflicts with an existing code, the service can generate another code rather than allowing duplicate identifiers.
+If Redis is restarted or its cache is cleared, URL data can be retrieved from PostgreSQL and the cache can be rebuilt through the cache-aside flow.
 
 ---
 
@@ -495,72 +614,7 @@ Redis
        Original URL
 ```
 
-The redirect path should therefore avoid unnecessary database queries whenever a popular URL is already cached.
-
----
-
-# Scalability Considerations
-
-The current architecture provides several foundations for scaling:
-
-### Application Layer
-
-Spring Boot instances are stateless with respect to:
-
-* Redis cache state
-* Rate-limit counters
-* Persistent URL data
-
-This allows multiple application instances to run behind a load balancer.
-
-### Cache Layer
-
-Redis handles:
-
-* Frequently accessed URL lookups
-* Rate-limit counters
-* Shared state across application instances
-
-### Database Layer
-
-PostgreSQL remains the source of truth and can later be scaled using:
-
-* Connection pooling
-* Proper indexing
-* Read replicas
-* Query optimization
-* Partitioning for very large datasets
-
-### Load Balancing
-
-Multiple Spring Boot instances can be placed behind:
-
-```text
-Load Balancer
-      │
- ┌────┼────┐
- ▼    ▼    ▼
-App  App  App
-```
-
-### Future Database Scaling
-
-For very large workloads:
-
-```text
-                  Application
-                      │
-              ┌───────┴───────┐
-              │               │
-              ▼               ▼
-           Redis          PostgreSQL
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-              Primary DB          Read Replicas
-```
-
-Read replicas can be introduced when read traffic becomes too large for a single PostgreSQL instance.
+Popular URLs can therefore be served without repeatedly querying PostgreSQL.
 
 ---
 
@@ -568,7 +622,7 @@ Read replicas can be introduced when read traffic becomes too large for a single
 
 Redis is not treated as the source of truth.
 
-The expected consistency model is:
+The consistency model is:
 
 ```text
 PostgreSQL
@@ -582,13 +636,13 @@ Redis
 Application
 ```
 
-When URL data changes or a URL is deleted, the corresponding cache entry should be invalidated so stale data is not served.
+When URL data changes or a URL is deleted, the corresponding Redis entry should be invalidated.
 
 This is particularly important for:
 
 * URL deletion
 * URL expiration
-* Changes to URL metadata
+* URL metadata changes
 
 ---
 
@@ -596,11 +650,19 @@ This is particularly important for:
 
 ## Redis Unavailable
 
-Redis should be treated as a supporting infrastructure component rather than the permanent source of truth.
+Redis is a supporting infrastructure component rather than the permanent source of truth.
 
-A production deployment can be designed so that a Redis failure does not result in permanent data loss because URL data remains in PostgreSQL.
+A production implementation can allow database-backed fallback for cache misses so that temporary Redis failure does not cause permanent data loss.
 
-The application can fall back to database reads where appropriate.
+URL data remains persisted in PostgreSQL.
+
+Redis failure may still affect:
+
+* Cache performance
+* Rate limiting
+* Distributed request state
+
+High-availability Redis can be introduced for production deployments.
 
 ## PostgreSQL Unavailable
 
@@ -609,10 +671,15 @@ PostgreSQL is the persistent source of truth.
 If PostgreSQL is unavailable:
 
 * URL creation cannot be safely persisted
-* Cache misses cannot be populated from the database
+* Cache misses cannot be populated
 * Statistics updates may fail
 
-Therefore PostgreSQL requires appropriate backups, monitoring, connection pooling, and high-availability planning for production deployments.
+Production deployments should therefore use appropriate:
+
+* Backups
+* Monitoring
+* Connection pooling
+* High-availability planning
 
 ---
 
@@ -709,7 +776,7 @@ Successful response:
 204 No Content
 ```
 
-The associated cache entry should also be invalidated.
+The associated Redis cache entry should also be invalidated.
 
 ---
 
@@ -853,6 +920,14 @@ The application will be available at:
 http://localhost:8080
 ```
 
+Docker Compose provides:
+
+```text
+Spring Boot
+PostgreSQL
+Redis
+```
+
 ---
 
 # Running Without Docker
@@ -897,7 +972,7 @@ Run the complete Maven verification lifecycle:
 mvn verify
 ```
 
-The current test suite covers:
+The current automated test suite covers:
 
 * Controller tests
 * Service tests
@@ -907,7 +982,7 @@ The current test suite covers:
 * PostgreSQL integration tests
 * Testcontainers integration tests
 
-Current result:
+Current verified result:
 
 ```text
 Tests run: 33
@@ -959,15 +1034,11 @@ docker-compose.yml
 
 The Docker Compose environment provides the infrastructure required by the application.
 
-Typical architecture:
-
 ```text
 Docker Compose
 │
 ├── Spring Boot Application
-│
 ├── PostgreSQL
-│
 └── Redis
 ```
 
@@ -1014,11 +1085,50 @@ This ensures that changes are automatically checked before merging.
 
 ---
 
+# Scalability Basics
+
+The current implementation establishes the fundamental building blocks required to scale the service.
+
+## Current Architecture
+
+```text
+Client
+  │
+  ▼
+Spring Boot
+  │
+  ├── Redis Cache
+  │
+  ├── Redis Rate Limits
+  │
+  └── PostgreSQL
+```
+
+## Horizontal Scaling
+
+The application layer can be replicated:
+
+```text
+                 Load Balancer
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+        App #1       App #2       App #3
+          │            │            │
+          └────────────┼────────────┘
+                       │
+              ┌────────┴────────┐
+              ▼                 ▼
+            Redis          PostgreSQL
+```
+
+The application does not rely on local in-memory cache or local rate-limit state, allowing multiple instances to share Redis-backed state.
+
+---
+
 # Production Scalability Roadmap
 
-The current architecture provides the foundation for horizontal scaling.
-
-Potential future improvements include:
+The current project implements the core scalability foundations. The following are possible future improvements.
 
 ### Application
 
@@ -1026,19 +1136,20 @@ Potential future improvements include:
 * Load balancer
 * Health checks
 * Graceful shutdown
-* Connection pool tuning
+* Connection-pool tuning
+* Horizontal Pod Autoscaling
 
 ### Redis
 
 * Redis Sentinel
 * Redis Cluster
-* High-availability Redis deployment
+* High-availability Redis
 * Cache monitoring
 
 ### PostgreSQL
 
 * Read replicas
-* Connection pool optimization
+* Connection-pool optimization
 * Query/index optimization
 * Partitioning for very large datasets
 * Automated backups
@@ -1047,7 +1158,6 @@ Potential future improvements include:
 ### Infrastructure
 
 * Kubernetes deployment
-* Horizontal Pod Autoscaling
 * AWS deployment
 * Managed PostgreSQL
 * Managed Redis
@@ -1065,7 +1175,7 @@ Potential future improvements include:
 
 # Future Enhancements
 
-The core URL-shortening system is implemented. Potential product and infrastructure enhancements include:
+Potential product and infrastructure enhancements include:
 
 * JWT Authentication
 * User Accounts
@@ -1109,7 +1219,7 @@ Redis provides:
 * Efficient rate limiting
 * Low-latency caching
 
-It is used for performance-sensitive ephemeral data.
+It is used for performance-sensitive and ephemeral data.
 
 ## Why Spring Boot?
 
@@ -1128,7 +1238,39 @@ Spring Boot provides:
 
 # Architecture Summary
 
-The final architecture can be summarized as:
+The implemented system can be summarized as:
+
+```text
+                         ┌─────────────────┐
+                         │     Clients     │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │  Spring Boot    │
+                         │   Application   │
+                         └────────┬────────┘
+                                  │
+                         ┌────────▼────────┐
+                         │ Rate Limiting   │
+                         │     Redis       │
+                         └────────┬────────┘
+                                  │
+                         ┌────────▼────────┐
+                         │   URL Cache     │
+                         │     Redis       │
+                         └────────┬────────┘
+                                  │
+                              Cache Miss
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │   PostgreSQL    │
+                         │ Source of Truth │
+                         └─────────────────┘
+```
+
+For horizontal scaling:
 
 ```text
                          ┌─────────────────┐
@@ -1150,16 +1292,9 @@ The final architecture can be summarized as:
                     └─────────────┼─────────────┘
                                   │
                          ┌────────▼────────┐
-                         │ Rate Limiting   │
-                         │     Redis       │
+                         │      Redis      │
+                         │ Cache + Limits  │
                          └────────┬────────┘
-                                  │
-                         ┌────────▼────────┐
-                         │   URL Cache     │
-                         │     Redis       │
-                         └────────┬────────┘
-                                  │
-                              Cache Miss
                                   │
                                   ▼
                          ┌─────────────────┐
@@ -1171,14 +1306,32 @@ The final architecture can be summarized as:
 The architecture separates responsibilities:
 
 ```text
-PostgreSQL → Durable persistence
-Redis      → Cache + rate limiting
-Spring Boot → Business logic and API
-Docker     → Containerized deployment
-GitHub CI  → Automated verification
+Short-code generation → Compact URL-safe identifiers
+PostgreSQL            → Durable persistence
+Redis                 → Cache + rate limiting
+Spring Boot           → API and business logic
+Docker                → Containerized deployment
+GitHub Actions        → Automated verification
 ```
 
-This provides a strong foundation for scaling the URL shortener from a single application instance to a horizontally scaled production architecture.
+This provides the core foundations required for a scalable URL-shortening service while keeping PostgreSQL as the durable source of truth and Redis as the high-performance shared infrastructure layer.
+
+---
+
+# Requirement Coverage
+
+The project covers the requested URL Shortener system-design requirements:
+
+| Requirement                     | Status | Implementation                                                   |
+| ------------------------------- | ------ | ---------------------------------------------------------------- |
+| Hashing / Short-code generation | ✅      | Compact URL-safe identifiers with collision protection           |
+| Database Design                 | ✅      | PostgreSQL, `urls` table, unique short-code constraint, Flyway   |
+| Redis Caching                   | ✅      | Cache-aside strategy and Redis URL cache                         |
+| Read-heavy Architecture         | ✅      | Redis-first redirect path                                        |
+| Rate Limiting                   | ✅      | Redis-backed IP-based limits                                     |
+| Scalability Basics              | ✅      | Stateless application design and horizontal scaling architecture |
+
+> **Note:** Short-code generation is an identifier-generation mechanism rather than cryptographic hashing. The database uniqueness constraint provides the final collision-safety guarantee.
 
 ---
 
