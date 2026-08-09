@@ -1,34 +1,116 @@
+version: "3.9"
+
 services:
 
+  # ============================================================
+  # PostgreSQL Database
+  #
+  # Primary relational database used by the URL Shortener
+  # application to persist URL mappings and related metadata.
+  # ============================================================
   postgres:
     image: postgres:16-alpine
     container_name: url-shortener-postgres
+
     environment:
       POSTGRES_DB: url_shortener
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: Postgres@123
+
     ports:
       - "5432:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+    restart: unless-stopped
+
+  # ============================================================
+  # Redis Cache
+  #
+  # Redis is used as an in-memory cache to improve application
+  # performance by reducing repeated database queries.
+  #
+  # It will be used for:
+  # - URL lookup caching
+  # - Statistics caching
+  # - Future rate limiting
+  # - Session/token storage (if needed)
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: url-shortener-redis
+
+    ports:
+      - "6380:6379"
+
+    # Enable Append Only File (AOF) persistence so cached data
+    # survives container restarts when appropriate.
+    command: redis-server --appendonly yes
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+    restart: unless-stopped
+
+  # ============================================================
+  # Spring Boot Application
+  #
+  # Main application container.
+  #
+  # Waits until PostgreSQL and Redis are healthy before starting.
+  # ============================================================
   app:
     build: .
+
     container_name: url-shortener-app
+
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
     environment:
+      # ==========================
+      # PostgreSQL Configuration
+      # ==========================
       DB_URL: jdbc:postgresql://postgres:5432/url_shortener
       DB_USERNAME: postgres
       DB_PASSWORD: Postgres@123
+
+      # ==========================
+      # Redis Configuration
+      # ==========================
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
     ports:
       - "8080:8080"
 
+    restart: unless-stopped
+
+# ============================================================
+# Named Volumes
+#
+# These persist data even if containers are recreated.
+# ============================================================
 volumes:
+
+  # PostgreSQL persistent storage
   postgres_data:
+
+  # Redis persistent storage (AOF)
+  redis_data:

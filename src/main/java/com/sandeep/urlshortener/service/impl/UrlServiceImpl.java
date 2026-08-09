@@ -1,5 +1,6 @@
 package com.sandeep.urlshortener.service.impl;
 
+import com.sandeep.urlshortener.cache.CacheConstants;
 import com.sandeep.urlshortener.dto.request.CreateShortUrlRequest;
 import com.sandeep.urlshortener.dto.response.CreateShortUrlResponse;
 import com.sandeep.urlshortener.dto.response.UrlStatsResponse;
@@ -13,15 +14,41 @@ import com.sandeep.urlshortener.util.ShortCodeGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
 /**
- * Implementation of {@link UrlService}.
+ * ========================================================================
+ * URL Service Implementation
+ * ========================================================================
  *
- * <p>Handles the core business logic for creating, redirecting,
- * retrieving statistics for, and deleting shortened URLs.</p>
+ * Provides business logic for:
+ *
+ * 1. Creating shortened URLs
+ * 2. Resolving short codes
+ * 3. Tracking click counts
+ * 4. Retrieving URL statistics
+ * 5. Deleting shortened URLs
+ * 6. Redis caching
+ *
+ * Cache strategy:
+ *
+ * Client
+ *   |
+ *   v
+ * UrlServiceImpl
+ *   |
+ *   v
+ * Redis
+ *   |
+ *   +---- HIT ----> URL
+ *   |
+ *   +---- MISS ---> PostgreSQL ---> Redis ---> URL
+ *
+ * PostgreSQL remains the source of truth.
  */
 @Service
 @Slf4j
@@ -29,50 +56,46 @@ import java.time.LocalDateTime;
 public class UrlServiceImpl implements UrlService {
 
     /**
-     * Repository responsible for URL database operations.
+     * PostgreSQL repository.
      */
     private final UrlRepository repository;
 
     /**
-     * Utility responsible for generating short codes.
+     * Generates unique short codes.
      */
     private final ShortCodeGenerator generator;
 
     /**
-     * Creates a new shortened URL.
-     *
-     * <p>A unique short code is generated and checked against the database
-     * before the URL is persisted.</p>
-     *
-     * @param request request containing the original URL and optional expiration time
-     * @return response containing details of the newly created short URL
+     * Spring CacheManager backed by Redis.
+     */
+    private final CacheManager cacheManager;
+
+
+    /**
+     * ========================================================================
+     * Create Short URL
+     * ========================================================================
      */
     @Override
     public CreateShortUrlResponse createShortUrl(
             CreateShortUrlRequest request) {
 
         log.info(
-                "Creating short URL for: {}",
+                "Creating short URL for original URL: {}",
                 request.getOriginalUrl()
         );
 
+        /*
+         * Generate a unique short code.
+         */
         String code;
 
-        /*
-         * Generate a short code until a unique code is found.
-         *
-         * The database check prevents two URLs from being assigned
-         * the same short code.
-         */
         do {
             code = generator.generate();
         } while (repository.existsByShortCode(code));
 
         /*
-         * Build the URL entity.
-         *
-         * createdAt and clickCount are initialized automatically
-         * by the Url entity.
+         * Build URL entity.
          */
         Url url = Url.builder()
                 .originalUrl(request.getOriginalUrl())
@@ -81,17 +104,22 @@ public class UrlServiceImpl implements UrlService {
                 .build();
 
         /*
-         * Persist the newly created URL.
+         * Save URL in PostgreSQL.
          */
         Url savedUrl = repository.save(url);
 
         log.info(
-                "Short URL created successfully. Code: {}",
+                "Short URL created successfully. Code={}",
                 savedUrl.getShortCode()
         );
 
         /*
-         * Convert the entity into the response DTO.
+         * Cache the newly created URL.
+         */
+        putInCache(savedUrl);
+
+        /*
+         * Build response.
          */
         return CreateShortUrlResponse.builder()
                 .shortCode(savedUrl.getShortCode())
@@ -106,102 +134,196 @@ public class UrlServiceImpl implements UrlService {
                 .build();
     }
 
+
     /**
-     * Retrieves the original URL associated with a short code.
+     * ========================================================================
+     * Resolve Short URL
+     * ========================================================================
      *
-     * <p>The method performs the following operations:</p>
-     * <ul>
-     *     <li>Finds the short URL in the database.</li>
-     *     <li>Throws 404-related exception when it does not exist.</li>
-     *     <li>Checks whether the URL has expired.</li>
-     *     <li>Throws 410-related exception when expired.</li>
-     *     <li>Increments the click count.</li>
-     *     <li>Returns the original URL.</li>
-     * </ul>
+     * IMPORTANT:
      *
-     * @param shortCode unique short code
-     * @return original URL
-     * @throws ResourceNotFoundException if the short code does not exist
-     * @throws UrlExpiredException if the short URL has expired
+     * We intentionally do NOT use @Cacheable here.
+     *
+     * Why?
+     *
+     * Because every successful redirect must increment clickCount.
+     *
+     * @Cacheable would return the cached value and skip the method body
+     * on subsequent requests, which would prevent clickCount from being
+     * updated correctly.
      */
     @Override
     public String getOriginalUrl(String shortCode) {
 
         log.info(
-                "Redirect request received for short code: {}",
+                "Resolving short URL. Code={}",
                 shortCode
         );
 
         /*
-         * Find the URL by its short code.
-         *
-         * A missing URL is a normal client/resource condition,
-         * therefore WARN is more appropriate than ERROR.
+         * ------------------------------------------------------------
+         * STEP 1: Check Redis
+         * ------------------------------------------------------------
          */
-        Url url = repository.findByShortCode(shortCode)
+        Url url = getFromCache(shortCode);
+
+        if (url != null) {
+
+            log.info(
+                    "Redis cache HIT. Code={}",
+                    shortCode
+            );
+
+            /*
+             * Check expiration even when the URL came from Redis.
+             */
+            if (isExpired(url)) {
+
+                log.info(
+                        "Cached URL has expired. Code={}",
+                        shortCode
+                );
+
+                evictFromCache(shortCode);
+
+                throw new UrlExpiredException(
+                        "Short URL has expired: " + shortCode
+                );
+            }
+
+            /*
+             * Increment click count.
+             * (incrementClickCount() already persists to PostgreSQL
+             * and refreshes Redis via putInCache() internally.)
+             */
+            incrementClickCount(url);
+
+            return url.getOriginalUrl();
+        }
+
+
+        /*
+         * ------------------------------------------------------------
+         * STEP 2: Redis MISS
+         * ------------------------------------------------------------
+         */
+        log.info(
+                "Redis cache MISS. Code={}",
+                shortCode
+        );
+
+        /*
+         * Retrieve URL from PostgreSQL.
+         */
+        url = repository.findByShortCode(shortCode)
                 .orElseThrow(() -> {
 
                     log.warn(
-                            "Short URL not found: {}",
+                            "Short URL not found. Code={}",
                             shortCode
                     );
 
                     return new ResourceNotFoundException(
-                            "Short URL '" + shortCode + "' not found"
+                            "Short URL not found: " + shortCode
                     );
                 });
 
-        /*
-         * Check whether the URL has expired.
-         *
-         * A null expiration date means the URL never expires.
-         */
-        if (url.getExpiresAt() != null
-                && url.getExpiresAt().isBefore(LocalDateTime.now())) {
 
-            log.warn(
-                    "Expired URL accessed: {}",
+        /*
+         * ------------------------------------------------------------
+         * STEP 3: Check expiration
+         * ------------------------------------------------------------
+         */
+        if (isExpired(url)) {
+
+            log.info(
+                    "URL has expired. Code={}",
                     shortCode
             );
 
+            /*
+             * Remove expired URL from Redis if it exists.
+             */
+            evictFromCache(shortCode);
+
             throw new UrlExpiredException(
-                    "Short URL '" + shortCode + "' has expired"
+                    "Short URL has expired: " + shortCode
             );
         }
 
+
         /*
-         * Increment the click count.
+         * ------------------------------------------------------------
+         * STEP 4: Increment click count
+         * ------------------------------------------------------------
          *
-         * The entity normally initializes clickCount to 0,
-         * but the null check makes the service more defensive.
+         * incrementClickCount() persists the updated click count to
+         * PostgreSQL AND refreshes Redis (single putInCache call).
+         * We do NOT call putInCache() again after this — doing so
+         * would write to Redis twice for a single resolution.
          */
-        long currentClickCount =
-                url.getClickCount() != null
-                        ? url.getClickCount()
-                        : 0L;
+        incrementClickCount(url);
 
-        url.setClickCount(currentClickCount + 1);
 
         /*
-         * Persist the updated click count.
+         * ------------------------------------------------------------
+         * STEP 5: Return original URL
+         * ------------------------------------------------------------
          */
-        repository.save(url);
-
-        log.info(
-                "Redirect successful. Code={}, Click count={}",
-                shortCode,
-                url.getClickCount()
-        );
-
         return url.getOriginalUrl();
     }
 
+
     /**
-     * Retrieves statistics for a shortened URL.
+     * ========================================================================
+     * Increment Click Count
+     * ========================================================================
+     */
+    private void incrementClickCount(Url url) {
+
+        long currentCount = url.getClickCount() == null
+                ? 0L
+                : url.getClickCount();
+
+        url.setClickCount(currentCount + 1L);
+
+        /*
+        * Persist updated click count in PostgreSQL.
+        */
+        Url updatedUrl = repository.save(url);
+
+        /*
+        * Update Redis with the latest entity.
+        */
+        putInCache(updatedUrl);
+
+        log.info(
+                "Click count incremented. Code={}, Clicks={}",
+                updatedUrl.getShortCode(),
+                updatedUrl.getClickCount()
+        );
+        }
+
+
+    /**
+     * ========================================================================
+     * Check URL Expiration
+     * ========================================================================
+     */
+    private boolean isExpired(Url url) {
+
+        return url.getExpiresAt() != null
+                && url.getExpiresAt().isBefore(LocalDateTime.now());
+    }
+
+
+    /**
+     * ========================================================================
+     * Get URL Statistics
+     * ========================================================================
      *
-     * @param shortCode unique short code
-     * @return statistics associated with the short URL
-     * @throws ResourceNotFoundException if the short code does not exist
+     * Statistics are always read from PostgreSQL because PostgreSQL
+     * is the source of truth.
      */
     @Override
     public UrlStatsResponse getStatistics(String shortCode) {
@@ -211,9 +333,6 @@ public class UrlServiceImpl implements UrlService {
                 shortCode
         );
 
-        /*
-         * Retrieve the URL from the database.
-         */
         Url url = repository.findByShortCode(shortCode)
                 .orElseThrow(() -> {
 
@@ -227,9 +346,6 @@ public class UrlServiceImpl implements UrlService {
                     );
                 });
 
-        /*
-         * Convert the entity into the statistics response DTO.
-         */
         return UrlStatsResponse.builder()
                 .shortCode(url.getShortCode())
                 .originalUrl(url.getOriginalUrl())
@@ -239,11 +355,11 @@ public class UrlServiceImpl implements UrlService {
                 .build();
     }
 
+
     /**
-     * Deletes an existing shortened URL.
-     *
-     * @param shortCode unique short code
-     * @throws ResourceNotFoundException if the short code does not exist
+     * ========================================================================
+     * Delete Short URL
+     * ========================================================================
      */
     @Override
     public void deleteShortUrl(String shortCode) {
@@ -254,10 +370,7 @@ public class UrlServiceImpl implements UrlService {
         );
 
         /*
-         * Find the URL before deleting it.
-         *
-         * This allows the service to return a meaningful 404
-         * when the requested short code does not exist.
+         * Find URL first so that we can return 404 when it doesn't exist.
          */
         Url url = repository.findByShortCode(shortCode)
                 .orElseThrow(() -> {
@@ -273,12 +386,143 @@ public class UrlServiceImpl implements UrlService {
                 });
 
         /*
-         * Delete the URL entity.
+         * Delete from PostgreSQL.
          */
         repository.delete(url);
 
+        /*
+         * Delete from Redis.
+         */
+        evictFromCache(shortCode);
+
         log.info(
                 "Short URL deleted successfully: {}",
+                shortCode
+        );
+    }
+
+
+    /**
+     * ========================================================================
+     * Redis Cache - GET
+     * ========================================================================
+     */
+    private Url getFromCache(String shortCode) {
+
+        Cache cache = cacheManager.getCache(
+                CacheConstants.URL_CACHE
+        );
+
+        if (cache == null) {
+
+            log.warn(
+                    "Redis cache '{}' is not available",
+                    CacheConstants.URL_CACHE
+            );
+
+            return null;
+        }
+
+        Cache.ValueWrapper valueWrapper = cache.get(shortCode);
+
+        if (valueWrapper == null) {
+
+            return null;
+        }
+
+        Object value = valueWrapper.get();
+
+        if (value instanceof Url) {
+
+            return (Url) value;
+        }
+
+        log.warn(
+                "Unexpected value found in Redis cache for key: {}. Type={}",
+                shortCode,
+                value == null
+                        ? "null"
+                        : value.getClass().getName()
+        );
+
+        return null;
+    }
+
+
+    /**
+     * ========================================================================
+     * Redis Cache - PUT
+     * ========================================================================
+     */
+    private void putInCache(Url url) {
+
+        if (url == null || url.getShortCode() == null) {
+
+            return;
+        }
+
+        Cache cache = cacheManager.getCache(
+                CacheConstants.URL_CACHE
+        );
+
+        if (cache == null) {
+
+            log.error(
+                    "Redis cache '{}' is NOT available",
+                    CacheConstants.URL_CACHE
+            );
+
+            return;
+        }
+
+        log.info(
+                "Putting URL into cache. Cache={}, Key={}",
+                CacheConstants.URL_CACHE,
+                url.getShortCode()
+        );
+
+        cache.put(
+                url.getShortCode(),
+                url
+        );
+
+        log.info(
+                "URL cached in Redis. Code={}",
+                url.getShortCode()
+        );
+    }
+
+
+    /**
+     * ========================================================================
+     * Redis Cache - EVICT
+     * ========================================================================
+     */
+    private void evictFromCache(String shortCode) {
+
+        if (shortCode == null) {
+
+            return;
+        }
+
+        Cache cache = cacheManager.getCache(
+                CacheConstants.URL_CACHE
+        );
+
+        if (cache == null) {
+
+            log.warn(
+                    "Redis cache '{}' is not available",
+                    CacheConstants.URL_CACHE
+            );
+
+            return;
+        }
+
+        cache.evict(shortCode);
+
+        log.info(
+                "URL removed from Redis cache. Code={}",
                 shortCode
         );
     }

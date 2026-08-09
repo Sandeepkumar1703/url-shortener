@@ -3,8 +3,7 @@ package com.sandeep.urlshortener.exception;
 /**
  * Exception thrown when a requested resource cannot be found.
  *
- * <p>This exception is handled by {@link GlobalExceptionHandler}
- * and results in an HTTP 404 Not Found response.</p>
+ * Results in an HTTP 404 Not Found response.
  */
 public class ResourceNotFoundException extends RuntimeException {
 
