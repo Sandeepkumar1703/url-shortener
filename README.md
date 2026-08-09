@@ -1,96 +1,94 @@
 # URL Shortener API
 
-A production-ready **URL Shortener REST API** built with **Java 17**, **Spring Boot 3**, **PostgreSQL**, and **Flyway**. The application allows users to create short URLs, redirect to the original destination, retrieve analytics, and delete shortened URLs. It follows a clean layered architecture with validation, global exception handling, automated testing, and interactive API documentation.
+![CI](https://github.com/Sandeepkumar1703/url-shortener/actions/workflows/ci.yml/badge.svg)
+![Java](https://img.shields.io/badge/Java-17-orange)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.3.2-brightgreen)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
+![Maven](https://img.shields.io/badge/Maven-Build-red)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+> A production-ready **URL Shortener REST API** built with **Java 17**, **Spring Boot 3**, **PostgreSQL**, **Flyway**, **Docker**, and **GitHub Actions CI**. The application enables users to create, manage, and analyze shortened URLs while following enterprise software development practices including layered architecture, automated testing, database versioning, containerization, and continuous integration.
 
 ---
 
-## Features
+# Features
 
-* Create short URLs for any valid URL
-* Automatic unique short code generation
-* Redirect short URLs to the original destination
-* URL expiration support
-* Click tracking and statistics
-* Delete shortened URLs
-* Bean Validation for request validation
-* Global exception handling with consistent error responses
-* Interactive Swagger/OpenAPI documentation
-* Database versioning with Flyway
-* Comprehensive unit, controller, and repository tests
-* Testcontainers integration for repository testing
-
----
-
-## Tech Stack
-
-### Backend
-
-* Java 17
-* Spring Boot 3.3.2
-* Spring Web
-* Spring Data JPA
-* Hibernate
-* Bean Validation
-
-### Database
-
-* PostgreSQL
-* Flyway
-
-### Testing
-
-* JUnit 5
-* Mockito
-* MockMvc
-* Testcontainers
-
-### Documentation
-
-* SpringDoc OpenAPI
-* Swagger UI
-
-### Build Tool
-
-* Maven
+- Create short URLs for any valid URL
+- Automatically generate unique short codes
+- Redirect short URLs to the original destination
+- URL expiration support
+- Track click counts
+- Retrieve URL statistics
+- Delete shortened URLs
+- Request validation using Jakarta Bean Validation
+- Centralized global exception handling
+- Interactive Swagger/OpenAPI documentation
+- Database schema management using Flyway
+- Docker & Docker Compose support
+- GitHub Actions CI pipeline
+- Unit, Controller, Service, and Repository testing
+- Testcontainers integration for database testing
 
 ---
 
-## Architecture
+# Tech Stack
 
-```
-Client
-   │
-   ▼
-REST Controller
-   │
-   ▼
-Service Layer
-   │
-   ▼
-Repository Layer
-   │
-   ▼
-PostgreSQL
+| Category | Technology |
+|----------|------------|
+| Language | Java 17 |
+| Framework | Spring Boot 3.3.2 |
+| Web | Spring MVC |
+| Persistence | Spring Data JPA, Hibernate |
+| Database | PostgreSQL |
+| Database Migration | Flyway |
+| Validation | Jakarta Bean Validation |
+| API Documentation | SpringDoc OpenAPI, Swagger UI |
+| Testing | JUnit 5, Mockito, MockMvc, Testcontainers |
+| Containerization | Docker, Docker Compose |
+| Build Tool | Maven |
+| CI/CD | GitHub Actions |
+
+---
+
+# Architecture
+
+```text
+                Client
+                   │
+                   ▼
+          REST Controller
+                   │
+                   ▼
+           Service Layer
+                   │
+                   ▼
+         Repository Layer
+                   │
+                   ▼
+             PostgreSQL
 ```
 
-The project follows a layered architecture that separates responsibilities between the web, business, and persistence layers, making the codebase easy to maintain and test.
+The project follows a clean layered architecture that separates presentation, business logic, and persistence concerns, making the application scalable, maintainable, and easy to test.
 
 ---
 
-## Project Structure
+# Project Structure
 
-```
+```text
 src
 ├── main
 │   ├── java
 │   │   └── com.sandeep.urlshortener
+│   │       ├── config
 │   │       ├── controller
 │   │       ├── dto
 │   │       ├── entity
 │   │       ├── exception
 │   │       ├── repository
 │   │       ├── service
-│   │       └── config
+│   │       └── util
+│   │
 │   └── resources
 │       ├── db
 │       │   └── migration
@@ -100,22 +98,31 @@ src
     ├── controller
     ├── repository
     └── service
+
+.github
+└── workflows
+    └── ci.yml
+
+Dockerfile
+docker-compose.yml
+pom.xml
+README.md
 ```
 
 ---
 
-## API Endpoints
+# REST API Endpoints
 
-| Method | Endpoint                         | Description              |
-| ------ | -------------------------------- | ------------------------ |
-| POST   | `/api/v1/urls`                   | Create a short URL       |
-| GET    | `/api/v1/urls/{shortCode}`       | Redirect to original URL |
-| GET    | `/api/v1/urls/{shortCode}/stats` | Retrieve URL statistics  |
-| DELETE | `/api/v1/urls/{shortCode}`       | Delete a short URL       |
+| Method | Endpoint | Description |
+|---------|----------|-------------|
+| POST | `/api/v1/urls` | Create Short URL |
+| GET | `/api/v1/urls/{shortCode}` | Redirect to Original URL |
+| GET | `/api/v1/urls/{shortCode}/stats` | Retrieve URL Statistics |
+| DELETE | `/api/v1/urls/{shortCode}` | Delete Short URL |
 
 ---
 
-## Example Request
+# Sample Request
 
 ### Create Short URL
 
@@ -131,7 +138,9 @@ Content-Type: application/json
 }
 ```
 
-### Response
+---
+
+# Sample Response
 
 ```json
 {
@@ -146,7 +155,7 @@ Content-Type: application/json
 
 ---
 
-## URL Statistics Response
+# URL Statistics
 
 ```json
 {
@@ -160,7 +169,7 @@ Content-Type: application/json
 
 ---
 
-## Error Response
+# Error Response
 
 ```json
 {
@@ -173,41 +182,48 @@ Content-Type: application/json
 
 ---
 
-## Getting Started
+# Getting Started
 
-### Prerequisites
+## Prerequisites
 
-* Java 17+
-* Maven 3.9+
-* Docker Desktop
-* Docker Compose
+- Java 17 or later
+- Maven 3.9+
+- Docker Desktop
+- Git
 
 ---
 
-### Clone the Repository
+## Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/url-shortener.git
+git clone https://github.com/Sandeepkumar1703/url-shortener.git
+
 cd url-shortener
 ```
 
 ---
 
-### Start PostgreSQL
+# Running with Docker
+
+Build and start the application along with PostgreSQL.
+
+```bash
+docker compose up --build
+```
+
+Run in detached mode:
 
 ```bash
 docker compose up -d
 ```
 
----
-
-### Run the Application
+Stop containers:
 
 ```bash
-mvn spring-boot:run
+docker compose down
 ```
 
-The application starts on:
+The application will be available at:
 
 ```
 http://localhost:8080
@@ -215,7 +231,17 @@ http://localhost:8080
 
 ---
 
-## API Documentation
+# Running Without Docker
+
+Start PostgreSQL manually, then run:
+
+```bash
+mvn spring-boot:run
+```
+
+---
+
+# API Documentation
 
 Swagger UI
 
@@ -231,94 +257,144 @@ http://localhost:8080/v3/api-docs
 
 ---
 
-## Running Tests
+# Running Tests
 
-Execute all tests:
+Run all tests
 
 ```bash
 mvn test
 ```
 
-Run the complete verification pipeline:
+Run the complete verification pipeline
 
 ```bash
 mvn verify
 ```
 
-Current Test Coverage
+Current automated test suite includes:
 
-* Controller Tests
-* Service Tests
-* Repository Tests
-* MockMvc API Tests
-* Mockito Unit Tests
-* Testcontainers PostgreSQL Integration Tests
+- Controller Tests
+- Service Tests
+- Repository Tests
+- MockMvc Tests
+- Mockito Unit Tests
+- Testcontainers PostgreSQL Integration Tests
+
+All tests pass successfully.
 
 ---
 
-## Database Migrations
+# Database Migrations
 
-Flyway automatically executes migrations during application startup.
+Flyway automatically executes database migrations during application startup.
 
-Migration scripts are located in:
+Migration files are located in:
 
-```
+```text
 src/main/resources/db/migration
 ```
 
 ---
 
-## Validation
+# Validation
 
-The API validates incoming requests using Jakarta Bean Validation.
+The application validates incoming requests using Jakarta Bean Validation.
 
-Examples include:
+Implemented validations include:
 
-* Valid URL format
-* Required fields
-* Future expiration date
-* Non-empty request values
-
----
-
-## Exception Handling
-
-A centralized global exception handler provides consistent error responses for:
-
-* Resource Not Found (404)
-* Validation Errors (400)
-* Expired URLs (410)
-* Duplicate Short Codes (409)
-* Internal Server Errors (500)
+- Valid URL format
+- Required request fields
+- Future expiration date
+- Non-empty request body
 
 ---
 
-## Future Enhancements
+# Exception Handling
 
-* User authentication and authorization
-* Custom short codes
-* QR code generation
-* Redis caching
-* Rate limiting
-* Analytics dashboard
-* URL access history
-* Scheduled cleanup of expired URLs
-* Docker image publishing
-* CI/CD with GitHub Actions
-* Cloud deployment (AWS)
+A centralized exception handler provides standardized API responses.
+
+| HTTP Status | Description |
+|-------------|-------------|
+| 400 | Validation Error |
+| 404 | Resource Not Found |
+| 409 | Duplicate Short Code |
+| 410 | URL Expired |
+| 500 | Internal Server Error |
 
 ---
 
-## Author
+# Docker Support
+
+The project includes:
+
+- Dockerfile
+- Docker Compose
+- PostgreSQL Container
+- Spring Boot Application Container
+
+Build and run:
+
+```bash
+docker compose up --build
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+---
+
+# Continuous Integration
+
+GitHub Actions automatically performs:
+
+- Maven Build
+- Dependency Resolution
+- Unit Testing
+- Integration Testing
+- Maven Verify
+
+Every push and pull request is automatically validated.
+
+---
+
+# Future Enhancements
+
+- JWT Authentication
+- User Accounts
+- Custom Short URLs
+- QR Code Generation
+- Redis Caching
+- Rate Limiting
+- URL Analytics Dashboard
+- Scheduled Cleanup of Expired URLs
+- Docker Image Publishing
+- Kubernetes Deployment
+- Prometheus & Grafana Monitoring
+- AWS Deployment
+
+---
+
+# Author
 
 **Sandeep Kumar Prasad**
 
 Backend Developer
 
-Specializing in Java, Spring Boot, REST APIs, PostgreSQL, and scalable backend systems.
+**Tech Stack**
+
+- Java
+- Spring Boot
+- REST APIs
+- PostgreSQL
+- Docker
+- Maven
+- GitHub Actions
 
 ---
 
-## License
+# License
 
-This project is licensed under the MIT License.
+This project is licensed under the **MIT License**.
